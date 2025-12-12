@@ -11,7 +11,7 @@ import platform
 
 # --- 1. Page Configuration ---
 st.set_page_config(
-    page_title="Medical Docs Automation", 
+    page_title="Medical Auto-Docs Pro", 
     page_icon="🩺", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -101,9 +101,6 @@ if 'step' not in st.session_state: st.session_state.step = 1
 TEMP_FOLDER = "temp_gen_files"
 
 def clean_number(value):
-    """
-    تحذف الـ .0 في نهاية الرقم، لكن تترك الأرقام العشرية مثل 5.8 كما هي
-    """
     val = str(value).strip()
     return val[:-2] if val.endswith('.0') else val
 
@@ -200,12 +197,19 @@ if app_mode == "📝 Generator (Main)":
         if uploaded_data.name.endswith('.csv'): df = pd.read_csv(uploaded_data, engine='python')
         else: df = pd.read_excel(uploaded_data)
         df.columns = df.columns.str.strip()
+        
+        # --- FIX: Ensure Height is treated as String/Object to allow free text editing ---
+        if 'Height' in df.columns:
+            # نحول العمود كله لنصوص عشان يقبل التعديل كنص
+            df['Height'] = df['Height'].astype(str).replace('nan', '')
+        # --------------------------------------------------------------------------
+
         df = df.fillna('')
 
         st.markdown("---")
         st.subheader("✏️ Step 1: Edit Data (Before Generation)")
         
-        # --- تعديل: جعل عمود Height نص (Text) ليقبل أي تنسيق كما هو ---
+        # استخدام st.column_config.TextColumn لقبول أي تنسيق
         edited_df = st.data_editor(
             df, 
             num_rows="dynamic", 
@@ -213,7 +217,7 @@ if app_mode == "📝 Generator (Main)":
             column_config={
                 "Height": st.column_config.TextColumn(
                     "Height",
-                    help="Patient Height (Write exactly as you want, e.g. 5.8)"
+                    help="Patient Height (Write exactly as you want, e.g. 5.8 or 5'8)"
                 )
             }
         )
@@ -251,7 +255,7 @@ if app_mode == "📝 Generator (Main)":
                             'zip': clean_number(row.get('ZIP Code', '')), 'phone': phone,
                             'weight': clean_number(row.get('Weight', '')), 
                             
-                            # --- هنا نستخدم clean_number العادية مع Height للحفاظ عليه كما هو ---
+                            # --- هنا نستخدم clean_number العادية عشان تشيل .0 بس تسيب 5.8 زي ما هي ---
                             'height': clean_number(row.get('Height', '')),
                             
                             'insurance': str(row.get('Primary Insurance', '')), 'policy_num': clean_number(row.get('MCN', '')),
@@ -350,7 +354,6 @@ elif app_mode == "🔄 PDF Converter Tool":
             
             with st.spinner("Converting..."):
                 success, msg = convert_to_pdf_cross_platform(conv_folder)
-                
                 if success:
                     pdf_files = [f for f in os.listdir(conv_folder) if f.endswith(".pdf")]
                     if len(pdf_files) > 0:
