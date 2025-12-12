@@ -108,7 +108,7 @@ def format_as_float(value):
     try: return str(float(value)) if value and str(value).strip() else ""
     except: return str(value)
 
-# --- دالة التحويل الجديدة (Iteration Mode - الأضمن 100%) ---
+# --- دالة التحويل الذكية (Robust Conversion v2) ---
 def convert_to_pdf_cross_platform(source_folder):
     abs_folder = os.path.abspath(source_folder)
     system_os = platform.system()
@@ -124,47 +124,29 @@ def convert_to_pdf_cross_platform(source_folder):
             return False, str(e)
             
     else: # Linux / Streamlit Cloud
-        # 1. Prepare Environment
-        my_env = os.environ.copy()
-        my_env['HOME'] = '/tmp'
-        
+        os.environ['HOME'] = '/tmp'
         try:
-            # 2. Check LibreOffice
             check = subprocess.run(["which", "libreoffice"], capture_output=True, text=True)
             if check.returncode != 0:
                 return False, "LibreOffice is MISSING. Ensure packages.txt exists."
 
-            # 3. Iterate files one by one (Looping) instead of wildcard
-            # This is safer and prevents "0 files" error
+            # Iterate files one by one for safety
             converted_count = 0
             errors = []
-            
             files_to_convert = [f for f in os.listdir(abs_folder) if f.endswith(".docx")]
             
-            if not files_to_convert:
-                return False, "No DOCX files found in folder to convert."
+            if not files_to_convert: return False, "No DOCX files found."
 
             for filename in files_to_convert:
                 input_path = os.path.join(abs_folder, filename)
+                cmd = ["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", abs_folder, input_path]
+                result = subprocess.run(cmd, capture_output=True, text=True)
                 
-                # Command for single file
-                cmd = [
-                    "libreoffice", "--headless", "--convert-to", "pdf",
-                    "--outdir", abs_folder, input_path
-                ]
-                
-                result = subprocess.run(cmd, capture_output=True, text=True, env=my_env)
-                
-                if result.returncode == 0:
-                    converted_count += 1
-                else:
-                    errors.append(f"{filename}: {result.stderr}")
+                if result.returncode == 0: converted_count += 1
+                else: errors.append(f"{filename}: {result.stderr}")
 
-            if converted_count > 0:
-                return True, f"Converted {converted_count} files. Errors: {len(errors)}"
-            else:
-                return False, f"All conversions failed. Errors: {errors[:2]}" # Show first 2 errors
-
+            if converted_count > 0: return True, f"Converted {converted_count} files."
+            else: return False, f"All failed. Errors: {errors[:2]}"
         except Exception as e:
             return False, f"System Error: {str(e)}"
 
@@ -192,7 +174,6 @@ if app_mode == "📝 Generator (Main)":
     </div>
     """, unsafe_allow_html=True)
 
-    # Stepper
     step1_class = "active" if st.session_state.step == 1 else "completed"
     step2_class = "active" if st.session_state.step == 2 else ("completed" if st.session_state.step > 2 else "")
     step3_class = "active" if st.session_state.step == 3 else ""
@@ -220,11 +201,31 @@ if app_mode == "📝 Generator (Main)":
         if uploaded_data.name.endswith('.csv'): df = pd.read_csv(uploaded_data, engine='python')
         else: df = pd.read_excel(uploaded_data)
         df.columns = df.columns.str.strip()
+        
+        # --- FIX: FORCE HEIGHT TO FLOAT ---
+        # هذا هو التعديل السحري: إجبار عمود الطول ليكون أرقام عشرية
+        if 'Height' in df.columns:
+            df['Height'] = pd.to_numeric(df['Height'], errors='coerce').astype(float)
+        # ----------------------------------
+        
         df = df.fillna('')
 
         st.markdown("---")
         st.subheader("✏️ Step 1: Edit Data (Before Generation)")
-        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+        
+        # استخدام st.column_config لإجبار العمود على قبول الأرقام العشرية في الواجهة
+        edited_df = st.data_editor(
+            df, 
+            num_rows="dynamic", 
+            use_container_width=True,
+            column_config={
+                "Height": st.column_config.NumberColumn(
+                    "Height",
+                    help="Patient Height (allows decimals)",
+                    format="%.2f" # يظهر خانتين عشريتين
+                )
+            }
+        )
 
         st.markdown("---")
         col_left, col_right = st.columns(2)
@@ -257,7 +258,9 @@ if app_mode == "📝 Generator (Main)":
                             'dob': str(row.get('Date of Birth', '')), 'address': str(row.get('Address', '')),
                             'city': str(row.get('City', '')), 'state': str(row.get('State', '')),
                             'zip': clean_number(row.get('ZIP Code', '')), 'phone': phone,
-                            'weight': clean_number(row.get('Weight', '')), 'height': format_as_float(row.get('Height', '')),
+                            'weight': clean_number(row.get('Weight', '')), 
+                            # استخدام format_as_float لضمان ظهور العلامة العشرية في ملف الورد
+                            'height': format_as_float(row.get('Height', '')),
                             'insurance': str(row.get('Primary Insurance', '')), 'policy_num': clean_number(row.get('MCN', '')),
                             'dr_name': str(row.get('Dr Name', '')), 'dr_npi': clean_number(row.get('NPI', '')),
                             'dr_address': str(row.get('Dr Address', '')), 'dr_city': str(row.get('Dr City', '')),
@@ -282,7 +285,6 @@ if app_mode == "📝 Generator (Main)":
                     if files_count > 0:
                         st.session_state.step = 2
                         st.success(f"Generated {files_count} drafts!")
-                        
                         zip_buf = io.BytesIO()
                         with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zf:
                             for fn in os.listdir(TEMP_FOLDER):
@@ -299,10 +301,8 @@ if app_mode == "📝 Generator (Main)":
                 st.markdown('<div class="btn-success">', unsafe_allow_html=True)
                 if st.button("🔄 Convert All to PDF"):
                     if os.path.exists(TEMP_FOLDER):
-                        with st.spinner("Converting one by one (Most Reliable)..."):
-                            
+                        with st.spinner("Converting on server (This might take a few seconds)..."):
                             success, msg = convert_to_pdf_cross_platform(TEMP_FOLDER)
-
                             if success:
                                 pdf_files = [f for f in os.listdir(TEMP_FOLDER) if f.endswith(".pdf")]
                                 if len(pdf_files) > 0:
@@ -310,16 +310,14 @@ if app_mode == "📝 Generator (Main)":
                                     with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zf:
                                         for fn in pdf_files:
                                             zf.write(os.path.join(TEMP_FOLDER, fn), arcname=fn)
-                                    
                                     st.session_state.step = 3
-                                    st.success(f"✅ {len(pdf_files)} PDF files ready!")
+                                    st.success(f"✅ Converted {len(pdf_files)} files successfully!")
                                     st.download_button("📥 Download Final PDF ZIP", zip_buf.getvalue(), "Final_PDFs.zip", "application/zip")
                                 else:
                                     st.error("⚠️ Conversion ran but produced 0 PDF files.")
-                                    st.code(msg) # Show debug info
+                                    st.info("Debug Info: " + msg)
                             else:
-                                st.error("❌ Conversion Failed.")
-                                st.code(msg)
+                                st.error(f"❌ Conversion Failed: {msg}")
                     else:
                         st.warning("Generate Word files first.")
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -355,7 +353,6 @@ elif app_mode == "🔄 PDF Converter Tool":
             
             with st.spinner("Converting..."):
                 success, msg = convert_to_pdf_cross_platform(conv_folder)
-                
                 if success:
                     pdf_files = [f for f in os.listdir(conv_folder) if f.endswith(".pdf")]
                     if len(pdf_files) > 0:
@@ -367,10 +364,9 @@ elif app_mode == "🔄 PDF Converter Tool":
                         st.download_button("📥 Download PDFs", zip_buf.getvalue(), "Converted_PDFs.zip", "application/zip")
                     else:
                         st.error("No PDFs created.")
-                        st.code(msg)
+                        st.info("Debug: " + msg)
                 else:
-                    st.error("Conversion Failed.")
-                    st.code(msg)
+                    st.error(f"Conversion Failed: {msg}")
         st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("<div style='text-align: center; margin-top: 50px; color: #cbd5e1; font-size: 12px;'>Medical Docs Automation Tool © 2025</div>", unsafe_allow_html=True)
