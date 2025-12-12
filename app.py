@@ -108,7 +108,7 @@ def format_as_float(value):
     try: return str(float(value)) if value and str(value).strip() else ""
     except: return str(value)
 
-# --- دالة التحويل الذكية (Robust Conversion v2) ---
+# --- دالة التحويل الجديدة (Iteration Mode - الأضمن 100%) ---
 def convert_to_pdf_cross_platform(source_folder):
     abs_folder = os.path.abspath(source_folder)
     system_os = platform.system()
@@ -124,28 +124,49 @@ def convert_to_pdf_cross_platform(source_folder):
             return False, str(e)
             
     else: # Linux / Streamlit Cloud
-        # 🟢 FIX 1: Set HOME to /tmp to allow LibreOffice to write config files
-        os.environ['HOME'] = '/tmp'
+        # 1. Prepare Environment
+        my_env = os.environ.copy()
+        my_env['HOME'] = '/tmp'
         
         try:
-            # Check Install
+            # 2. Check LibreOffice
             check = subprocess.run(["which", "libreoffice"], capture_output=True, text=True)
             if check.returncode != 0:
-                return False, "LibreOffice NOT found. Check packages.txt"
+                return False, "LibreOffice is MISSING. Ensure packages.txt exists."
 
-            # Run Command
-            cmd = f"libreoffice --headless --convert-to pdf --outdir \"{abs_folder}\" \"{abs_folder}/*.docx\""
+            # 3. Iterate files one by one (Looping) instead of wildcard
+            # This is safer and prevents "0 files" error
+            converted_count = 0
+            errors = []
             
-            # 🟢 FIX 2: Capture Output for Debugging
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            files_to_convert = [f for f in os.listdir(abs_folder) if f.endswith(".docx")]
             
-            if result.returncode != 0:
-                # لو فشل، رجع رسالة الخطأ اللي السيرفر قالها
-                return False, f"LibreOffice Error: {result.stderr}"
+            if not files_to_convert:
+                return False, "No DOCX files found in folder to convert."
+
+            for filename in files_to_convert:
+                input_path = os.path.join(abs_folder, filename)
                 
-            return True, "Success"
+                # Command for single file
+                cmd = [
+                    "libreoffice", "--headless", "--convert-to", "pdf",
+                    "--outdir", abs_folder, input_path
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, env=my_env)
+                
+                if result.returncode == 0:
+                    converted_count += 1
+                else:
+                    errors.append(f"{filename}: {result.stderr}")
+
+            if converted_count > 0:
+                return True, f"Converted {converted_count} files. Errors: {len(errors)}"
+            else:
+                return False, f"All conversions failed. Errors: {errors[:2]}" # Show first 2 errors
+
         except Exception as e:
-            return False, str(e)
+            return False, f"System Error: {str(e)}"
 
 # --- 4. Sidebar ---
 with st.sidebar:
@@ -278,13 +299,11 @@ if app_mode == "📝 Generator (Main)":
                 st.markdown('<div class="btn-success">', unsafe_allow_html=True)
                 if st.button("🔄 Convert All to PDF"):
                     if os.path.exists(TEMP_FOLDER):
-                        with st.spinner("Converting on server (This might take a few seconds)..."):
+                        with st.spinner("Converting one by one (Most Reliable)..."):
                             
-                            # استدعاء دالة التحويل مع استقبال حالة النجاح ورسالة الخطأ
                             success, msg = convert_to_pdf_cross_platform(TEMP_FOLDER)
 
                             if success:
-                                # Check if PDFs actually exist
                                 pdf_files = [f for f in os.listdir(TEMP_FOLDER) if f.endswith(".pdf")]
                                 if len(pdf_files) > 0:
                                     zip_buf = io.BytesIO()
@@ -293,14 +312,14 @@ if app_mode == "📝 Generator (Main)":
                                             zf.write(os.path.join(TEMP_FOLDER, fn), arcname=fn)
                                     
                                     st.session_state.step = 3
-                                    st.success(f"✅ Converted {len(pdf_files)} files successfully!")
+                                    st.success(f"✅ {len(pdf_files)} PDF files ready!")
                                     st.download_button("📥 Download Final PDF ZIP", zip_buf.getvalue(), "Final_PDFs.zip", "application/zip")
                                 else:
-                                    # هنا المشكلة: التحويل قال نجح بس مفيش ملفات
-                                    st.error("⚠️ Conversion process ran, but NO PDF files were created.")
-                                    st.info("Debug Info: " + msg) # عرض رسالة السيرفر
+                                    st.error("⚠️ Conversion ran but produced 0 PDF files.")
+                                    st.code(msg) # Show debug info
                             else:
-                                st.error(f"❌ Conversion Failed: {msg}")
+                                st.error("❌ Conversion Failed.")
+                                st.code(msg)
                     else:
                         st.warning("Generate Word files first.")
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -348,9 +367,10 @@ elif app_mode == "🔄 PDF Converter Tool":
                         st.download_button("📥 Download PDFs", zip_buf.getvalue(), "Converted_PDFs.zip", "application/zip")
                     else:
                         st.error("No PDFs created.")
-                        st.info("Debug: " + msg)
+                        st.code(msg)
                 else:
-                    st.error(f"Conversion Failed: {msg}")
+                    st.error("Conversion Failed.")
+                    st.code(msg)
         st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("<div style='text-align: center; margin-top: 50px; color: #cbd5e1; font-size: 12px;'>Medical Docs Automation Tool © 2025</div>", unsafe_allow_html=True)
