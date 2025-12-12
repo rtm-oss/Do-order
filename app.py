@@ -108,7 +108,7 @@ def format_as_float(value):
     try: return str(float(value)) if value and str(value).strip() else ""
     except: return str(value)
 
-# --- دالة التحويل الذكية (Robust Conversion) ---
+# --- دالة التحويل الذكية (Robust Conversion v2) ---
 def convert_to_pdf_cross_platform(source_folder):
     abs_folder = os.path.abspath(source_folder)
     system_os = platform.system()
@@ -119,31 +119,33 @@ def convert_to_pdf_cross_platform(source_folder):
             import pythoncom
             pythoncom.CoInitialize()
             convert(abs_folder)
-            return True
+            return True, "Success"
         except Exception as e:
-            st.error(f"Windows Error: {e}")
-            return False
+            return False, str(e)
+            
     else: # Linux / Streamlit Cloud
+        # 🟢 FIX 1: Set HOME to /tmp to allow LibreOffice to write config files
+        os.environ['HOME'] = '/tmp'
+        
         try:
-            # 1. Check if LibreOffice is installed
+            # Check Install
             check = subprocess.run(["which", "libreoffice"], capture_output=True, text=True)
             if check.returncode != 0:
-                st.error("🚨 Error: LibreOffice is NOT installed. Please check packages.txt")
-                return False
+                return False, "LibreOffice NOT found. Check packages.txt"
 
-            # 2. Run Conversion Command
+            # Run Command
             cmd = f"libreoffice --headless --convert-to pdf --outdir \"{abs_folder}\" \"{abs_folder}/*.docx\""
+            
+            # 🟢 FIX 2: Capture Output for Debugging
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
-            # 3. Log errors if any (but sometimes LibreOffice warns but works)
             if result.returncode != 0:
-                # st.warning(f"LibreOffice Log: {result.stderr}") # Uncomment for debugging
-                pass
+                # لو فشل، رجع رسالة الخطأ اللي السيرفر قالها
+                return False, f"LibreOffice Error: {result.stderr}"
                 
-            return True
+            return True, "Success"
         except Exception as e:
-            st.error(f"Linux Execution Error: {e}")
-            return False
+            return False, str(e)
 
 # --- 4. Sidebar ---
 with st.sidebar:
@@ -260,7 +262,6 @@ if app_mode == "📝 Generator (Main)":
                         st.session_state.step = 2
                         st.success(f"Generated {files_count} drafts!")
                         
-                        # Prepare Download for Word
                         zip_buf = io.BytesIO()
                         with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zf:
                             for fn in os.listdir(TEMP_FOLDER):
@@ -277,8 +278,12 @@ if app_mode == "📝 Generator (Main)":
                 st.markdown('<div class="btn-success">', unsafe_allow_html=True)
                 if st.button("🔄 Convert All to PDF"):
                     if os.path.exists(TEMP_FOLDER):
-                        with st.spinner("Converting on server..."):
-                            if convert_to_pdf_cross_platform(TEMP_FOLDER):
+                        with st.spinner("Converting on server (This might take a few seconds)..."):
+                            
+                            # استدعاء دالة التحويل مع استقبال حالة النجاح ورسالة الخطأ
+                            success, msg = convert_to_pdf_cross_platform(TEMP_FOLDER)
+
+                            if success:
                                 # Check if PDFs actually exist
                                 pdf_files = [f for f in os.listdir(TEMP_FOLDER) if f.endswith(".pdf")]
                                 if len(pdf_files) > 0:
@@ -288,12 +293,14 @@ if app_mode == "📝 Generator (Main)":
                                             zf.write(os.path.join(TEMP_FOLDER, fn), arcname=fn)
                                     
                                     st.session_state.step = 3
-                                    st.success(f"✅ Converted {len(pdf_files)} files!")
+                                    st.success(f"✅ Converted {len(pdf_files)} files successfully!")
                                     st.download_button("📥 Download Final PDF ZIP", zip_buf.getvalue(), "Final_PDFs.zip", "application/zip")
                                 else:
-                                    st.error("Conversion ran but produced 0 PDF files. Check formatting.")
+                                    # هنا المشكلة: التحويل قال نجح بس مفيش ملفات
+                                    st.error("⚠️ Conversion process ran, but NO PDF files were created.")
+                                    st.info("Debug Info: " + msg) # عرض رسالة السيرفر
                             else:
-                                st.error("Conversion failed.")
+                                st.error(f"❌ Conversion Failed: {msg}")
                     else:
                         st.warning("Generate Word files first.")
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -328,7 +335,9 @@ elif app_mode == "🔄 PDF Converter Tool":
                     f.write(uf.getbuffer())
             
             with st.spinner("Converting..."):
-                if convert_to_pdf_cross_platform(conv_folder):
+                success, msg = convert_to_pdf_cross_platform(conv_folder)
+                
+                if success:
                     pdf_files = [f for f in os.listdir(conv_folder) if f.endswith(".pdf")]
                     if len(pdf_files) > 0:
                         zip_buf = io.BytesIO()
@@ -339,8 +348,9 @@ elif app_mode == "🔄 PDF Converter Tool":
                         st.download_button("📥 Download PDFs", zip_buf.getvalue(), "Converted_PDFs.zip", "application/zip")
                     else:
                         st.error("No PDFs created.")
+                        st.info("Debug: " + msg)
                 else:
-                    st.error("Conversion Failed.")
+                    st.error(f"Conversion Failed: {msg}")
         st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("<div style='text-align: center; margin-top: 50px; color: #cbd5e1; font-size: 12px;'>Medical Docs Automation Tool © 2025</div>", unsafe_allow_html=True)
