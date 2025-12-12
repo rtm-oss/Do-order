@@ -11,7 +11,7 @@ import platform
 
 # --- 1. Page Configuration ---
 st.set_page_config(
-    page_title="Medical Auto-Docs Pro", 
+    page_title="Medical Docs Automation", 
     page_icon="🩺", 
     layout="wide",
     initial_sidebar_state="expanded"
@@ -101,12 +101,11 @@ if 'step' not in st.session_state: st.session_state.step = 1
 TEMP_FOLDER = "temp_gen_files"
 
 def clean_number(value):
+    """
+    تحذف الـ .0 في نهاية الرقم، لكن تترك الأرقام العشرية مثل 5.8 كما هي
+    """
     val = str(value).strip()
     return val[:-2] if val.endswith('.0') else val
-
-def format_as_float(value):
-    try: return str(float(value)) if value and str(value).strip() else ""
-    except: return str(value)
 
 # --- دالة التحويل الذكية (Robust Conversion v2) ---
 def convert_to_pdf_cross_platform(source_folder):
@@ -130,7 +129,6 @@ def convert_to_pdf_cross_platform(source_folder):
             if check.returncode != 0:
                 return False, "LibreOffice is MISSING. Ensure packages.txt exists."
 
-            # Iterate files one by one for safety
             converted_count = 0
             errors = []
             files_to_convert = [f for f in os.listdir(abs_folder) if f.endswith(".docx")]
@@ -174,6 +172,7 @@ if app_mode == "📝 Generator (Main)":
     </div>
     """, unsafe_allow_html=True)
 
+    # Stepper
     step1_class = "active" if st.session_state.step == 1 else "completed"
     step2_class = "active" if st.session_state.step == 2 else ("completed" if st.session_state.step > 2 else "")
     step3_class = "active" if st.session_state.step == 3 else ""
@@ -201,28 +200,20 @@ if app_mode == "📝 Generator (Main)":
         if uploaded_data.name.endswith('.csv'): df = pd.read_csv(uploaded_data, engine='python')
         else: df = pd.read_excel(uploaded_data)
         df.columns = df.columns.str.strip()
-        
-        # --- FIX: FORCE HEIGHT TO FLOAT ---
-        # هذا هو التعديل السحري: إجبار عمود الطول ليكون أرقام عشرية
-        if 'Height' in df.columns:
-            df['Height'] = pd.to_numeric(df['Height'], errors='coerce').astype(float)
-        # ----------------------------------
-        
         df = df.fillna('')
 
         st.markdown("---")
         st.subheader("✏️ Step 1: Edit Data (Before Generation)")
         
-        # استخدام st.column_config لإجبار العمود على قبول الأرقام العشرية في الواجهة
+        # --- تعديل: جعل عمود Height نص (Text) ليقبل أي تنسيق كما هو ---
         edited_df = st.data_editor(
             df, 
             num_rows="dynamic", 
             use_container_width=True,
             column_config={
-                "Height": st.column_config.NumberColumn(
+                "Height": st.column_config.TextColumn(
                     "Height",
-                    help="Patient Height (allows decimals)",
-                    format="%.2f" # يظهر خانتين عشريتين
+                    help="Patient Height (Write exactly as you want, e.g. 5.8)"
                 )
             }
         )
@@ -259,8 +250,10 @@ if app_mode == "📝 Generator (Main)":
                             'city': str(row.get('City', '')), 'state': str(row.get('State', '')),
                             'zip': clean_number(row.get('ZIP Code', '')), 'phone': phone,
                             'weight': clean_number(row.get('Weight', '')), 
-                            # استخدام format_as_float لضمان ظهور العلامة العشرية في ملف الورد
-                            'height': format_as_float(row.get('Height', '')),
+                            
+                            # --- هنا نستخدم clean_number العادية مع Height للحفاظ عليه كما هو ---
+                            'height': clean_number(row.get('Height', '')),
+                            
                             'insurance': str(row.get('Primary Insurance', '')), 'policy_num': clean_number(row.get('MCN', '')),
                             'dr_name': str(row.get('Dr Name', '')), 'dr_npi': clean_number(row.get('NPI', '')),
                             'dr_address': str(row.get('Dr Address', '')), 'dr_city': str(row.get('Dr City', '')),
@@ -268,7 +261,7 @@ if app_mode == "📝 Generator (Main)":
                             'dr_phone': clean_number(row.get('Dr Phone Number', '')), 'dr_fax': clean_number(row.get('Dr Fax', '')),
                             'L': mL, 'R': mR
                         }
-                        
+
                         tmpls = []
                         if template_back and ('BB' in prod or 'L0457' in prod): tmpls.append((template_back, "Back_Brace"))
                         if template_knee and ('KB' in prod or 'KNEE' in prod or 'L1833' in prod or 'BKB' in prod): tmpls.append((template_knee, "Knee_Brace"))
@@ -285,6 +278,7 @@ if app_mode == "📝 Generator (Main)":
                     if files_count > 0:
                         st.session_state.step = 2
                         st.success(f"Generated {files_count} drafts!")
+                        
                         zip_buf = io.BytesIO()
                         with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zf:
                             for fn in os.listdir(TEMP_FOLDER):
@@ -302,7 +296,9 @@ if app_mode == "📝 Generator (Main)":
                 if st.button("🔄 Convert All to PDF"):
                     if os.path.exists(TEMP_FOLDER):
                         with st.spinner("Converting on server (This might take a few seconds)..."):
+                            
                             success, msg = convert_to_pdf_cross_platform(TEMP_FOLDER)
+
                             if success:
                                 pdf_files = [f for f in os.listdir(TEMP_FOLDER) if f.endswith(".pdf")]
                                 if len(pdf_files) > 0:
@@ -310,6 +306,7 @@ if app_mode == "📝 Generator (Main)":
                                     with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED) as zf:
                                         for fn in pdf_files:
                                             zf.write(os.path.join(TEMP_FOLDER, fn), arcname=fn)
+                                    
                                     st.session_state.step = 3
                                     st.success(f"✅ Converted {len(pdf_files)} files successfully!")
                                     st.download_button("📥 Download Final PDF ZIP", zip_buf.getvalue(), "Final_PDFs.zip", "application/zip")
@@ -353,6 +350,7 @@ elif app_mode == "🔄 PDF Converter Tool":
             
             with st.spinner("Converting..."):
                 success, msg = convert_to_pdf_cross_platform(conv_folder)
+                
                 if success:
                     pdf_files = [f for f in os.listdir(conv_folder) if f.endswith(".pdf")]
                     if len(pdf_files) > 0:
