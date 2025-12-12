@@ -151,7 +151,7 @@ with st.sidebar:
     else: st.markdown("<div style='font-size: 50px; text-align:center'>🩺</div>", unsafe_allow_html=True)
     st.markdown("### ⚙️ Tools Menu")
     app_mode = st.radio("Choose Mode:", ["📝 Generator (Main)", "🔄 PDF Converter Tool"])
-    st.info("System Ready for Deployment ☁️")
+    # تم حذف سطر التنبيه حسب الطلب
 
 # --- 5. Main Logic ---
 
