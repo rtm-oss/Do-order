@@ -9,7 +9,7 @@ from datetime import datetime
 import subprocess
 import platform
 
-s
+
 # --- 1. Page Configuration ---
 st.set_page_config(
     page_title="Medical Auto-Docs Pro", 
@@ -372,4 +372,5 @@ elif app_mode == "🔄 PDF Converter Tool":
         st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("<div style='text-align: center; margin-top: 50px; color: #cbd5e1; font-size: 12px;'>Medical Docs Automation Tool © 2025</div>", unsafe_allow_html=True)
+
 
